@@ -11,10 +11,8 @@
 #include <fstream>
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
-#include <algorithm>
 #include <sys/stat.h>
 #include <unistd.h>
-
 
 using namespace std;
 
@@ -104,13 +102,14 @@ void readParFile(const string& filename, vector<string*>& pointers)
 	
 }
 
-void write_log(std::string type, std::string message, int verbose)
+void write_log(std::string type, std::string message, int verbose, const std::string& path)
 {
 
 	auto current_datetime = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
 	char datetime_str[20];
 	strftime(datetime_str, sizeof(datetime_str), "%Y%m%d %H:%M:%S", std::localtime(&current_datetime));
-	
+	std::string filePath = path + "/log.txt";	
+
 	std::stringstream full_message_text;
 	full_message_text << type << ": " << datetime_str << " --- " << message;
 	if (type == "ERROR")
@@ -120,8 +119,9 @@ void write_log(std::string type, std::string message, int verbose)
 	if ((verbose == 1 && type == "ERROR") || (verbose == 2))
 	{
 		std::ofstream outfile;
-		outfile.open("log.txt", std::ios_base::app);
+		outfile.open(filePath.c_str(), std::ios::out | std::ios_base::app);
 		outfile << full_message_text.str() << std::endl;
+		outfile.close();		
 	}
 }
 
@@ -130,54 +130,112 @@ void write_log(std::string type, std::string message, int verbose)
  * @directoryName is the desired name for the new directory
  * @return new directory in the current working directory
  */
-void create_dir(const string& directoryName, int verbose)
+
+
+
+void create_dir(const string& directoryName, int verbose, string path)
 {
+	
 	int status = mkdir(directoryName.c_str(), S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
 	if (status == 0) {        
-	write_log("INFO", directoryName+" created successfully.", verbose);
+	write_log("INFO", directoryName+" created successfully.", verbose, path);
     	} else {
-        write_log("INFO", directoryName + " already exists!", verbose);    	    	
+        write_log("INFO", directoryName + " already exists!", verbose, path);    	    	
 	}
 }
 
 int main() {
 	
+	//Getting the starting working directory where the log file will be saved
+		
+	char buffer[50];
+	getcwd(buffer, sizeof(buffer));
+	string startDirectory = std::string(buffer);	
+	
 	string msg;
-	string target_directory, cam_name, W, H, fps, distance, x_min, x_max, y_min, y_max, rgbAE, laserIR, allowRGB, verbose1;
-	vector<string*> ptrs = {&target_directory, &cam_name, &W, &H, &fps, &distance, &x_min, &x_max, &y_min, &y_max, &rgbAE, &laserIR, &allowRGB, &verbose1};
+	string target_directory, cam_name, W, H, fps, distance, x_min, x_max, y_min, y_max, rgbAE, laserIR, allowRGB, verbose1, dev_num;
+	vector<string*> ptrs = {&target_directory, &cam_name, &W, &H, &fps, &distance, &x_min, &x_max, &y_min, &y_max, &rgbAE, &laserIR, &allowRGB, &verbose1, &dev_num};
 	const string fileName = "input.par";
 	readParFile (fileName, ptrs);	
-	vector <string> parNames = {"Target Directory: ", "Camera Name: ", "Image Width: ", "Image Height: ", "Frames per Second: ", "Distance from ROI: ", "x_min: ", "x_max: ", "y_min: ", "y_max: ", "Auto Exposure Priority for RGB (0 = No, 1 = Yes): ", "Allow IR laser (0 = No, 1 = Yes): ", "Allow RGB capture (0 = No, 1 = Yes): ", "verbose: "};
-	
+	vector <string> parNames = {"Target Directory: ", "Camera Name: ", "Image Width: ",
+				"Image Height: ", "Frames per Second: ", "Distance from ROI: ",
+ 				"x_min: ", "x_max: ", "y_min: ", "y_max: ",
+ 				"Auto Exposure Priority for RGB (0 = No, 1 = Yes): ",
+ 				"Allow IR laser (0 = No, 1 = Yes): ",
+ 				"Allow RGB capture (0 = No, 1 = Yes): ", "verbose: ", "Device Number: "};
 	int verbose = stoi(verbose1);
-	
-	//Check if camera is connected
-	rs2::context ctx;
-	rs2::device_list devices = ctx.query_devices();
-	if (devices.size() == 0)
-	{
-		write_log("ERROR", "No realsense device connected, please check USB connectivity", verbose);
-		return 1; 
-	}
-	
-	rs2::device dev = devices[0]; //Assuming there is only 1 camera connected
-	dev.hardware_reset();	
-	//cout << "Resetting Realsense device... " << endl;
-	
+	int dev_choice = stoi(dev_num);
 	int numAtpp = 4;
-	int currentAtpp = 0;    
-	
-	write_log("INFO", "####---List of parameters configured ---###", verbose);	
+	int currentAtpp = 0;			
+
+	write_log("INFO", "####---List of parameters configured ---###", verbose, startDirectory);	
 	for (int i = 0; i < parNames.size(); i++)
 	{
 	  msg = parNames[i] + " " + *ptrs[i];
-	  write_log("INFO", msg, verbose);
+	  write_log("INFO", msg, verbose, startDirectory);
 	}
 	cout << endl;
 	
+	
+	//Check if camera is connected
+	rs2::context ctx;
+	auto devices = ctx.query_devices();
+	if (devices.size() == 0)
+	{
+		write_log("ERROR", "No realsense device connected, please check USB connectivity", verbose, startDirectory);
+		return 1; 
+	}
+	else
+	{
+		std::ostringstream out;
+		out << "Number of rs devices connected: " << devices.size();		
+		write_log("INFO",  out.str(), verbose, startDirectory);
+	}
+
+	
+	auto dev = devices[dev_choice]; //Chose which camera to use (In case of multiple cameras connected)	
+	//Check if camera is streaming frames	
+	while (currentAtpp < numAtpp)
+	{
+		rs2::pipeline piptest;
+		rs2::config cfg_test;		
+		cfg_test.enable_device(dev.get_info(RS2_CAMERA_INFO_SERIAL_NUMBER));
+		piptest.start(cfg_test);
+	
+		try 
+		{
+			for (auto i = 0; i < 30; i++) piptest.wait_for_frames();
+			//If sucess continue pipeline
+			write_log("INFO", "Frame streaming estabilhed, ready to start...", verbose, startDirectory);
+			piptest.stop(); //stop the current test pipeline					
+			break;
+		}catch(const rs2::error& e)
+		{
+			std::stringstream error_text;
+			error_text << "RealSense error calling " << e.get_failed_function() << "(" << e.get_failed_args() << "):\n    " << e.what();
+			write_log("ERROR", error_text.str(), verbose, startDirectory);
+			cout << endl;
+			write_log("INFO", "Trying to restart camera ... ", verbose, startDirectory);
+			std::this_thread::sleep_for(std::chrono::seconds(1)); // Wait before reattempting
+			dev.hardware_reset();
+			std::this_thread::sleep_for(std::chrono::seconds(1)); // Wait before reattempting
+			currentAtpp++;
+			piptest.stop();
+			if(currentAtpp==numAtpp)
+			{
+			piptest.stop();
+			write_log("ERROR", "unable to get frames, please check USB connectivity", verbose, startDirectory);
+			return 1;
+			}
+		}		
+		
+	}	
+	
+
 	rs2::colorizer color_map;
 	rs2::pipeline pipe;
 	rs2::config cfg;
+	cfg.enable_device(dev.get_info(RS2_CAMERA_INFO_SERIAL_NUMBER));	
 	if (allowRGB=="1")
 	{
 	cfg.enable_stream(RS2_STREAM_COLOR, stoi(W), stoi(H), RS2_FORMAT_RGB8, stoi(fps));
@@ -186,31 +244,7 @@ int main() {
     	cfg.enable_stream(RS2_STREAM_INFRARED, 1);
 	pipe.start(cfg);
 	
-	//Check if camera is streaming frames	
-	while (currentAtpp < numAtpp)
-	{
-		try 
-		{
-			for (auto i = 0; i < 30; i++) pipe.wait_for_frames();
-			//If sucess continue pipeline
-			write_log("INFO", "Frame streaming estabilhed, ready to start...", verbose);					
-			break;
-		}catch(const rs2::error& e)
-		{
-			std::stringstream error_text;
-			error_text << "RealSense error calling " << e.get_failed_function() << "(" << e.get_failed_args() << "):\n    " << e.what();
-			write_log("ERROR", error_text.str(), verbose);
-			cout << endl;
-			write_log("INFO", "Trying to restart camera ... ", verbose);
-			std::this_thread::sleep_for(std::chrono::seconds(1)); // Wait before reattempting
-			dev.hardware_reset();
-			std::this_thread::sleep_for(std::chrono::seconds(1)); // Wait before reattempting
-			pipe.stop(); // Stop the current pipeline
-        		pipe = rs2::pipeline(); 						
-			currentAtpp++;
-		}	
-
-	}	
+	
 	
 	if (allowRGB=="1")
 	{
@@ -224,19 +258,19 @@ int main() {
 	time_t start = time(nullptr);
 	std::ostringstream oss;	
     	oss << "Camera triggered at: " << ctime(&start);	
-    	write_log("INFO", oss.str(), verbose);	
+    	write_log("INFO", oss.str(), verbose, startDirectory);	
 	
 	if (chdir(target_directory.c_str())==0){
 	oss.str("");
 	oss << 	"Working directory set to " << target_directory;
-	write_log("INFO",oss.str() , verbose); 
+	write_log("INFO",oss.str() , verbose, startDirectory); 
 	}else{
-	char buffer[50];
-        getcwd(buffer, sizeof(buffer));
+	//char buffer[50];
+        //getcwd(buffer, sizeof(buffer));
 	oss.str("");
-	write_log("ERROR", "Failed to set directory. Reason: directory does not exist!!", verbose);	
+	write_log("ERROR", "Failed to set directory. Reason: directory does not exist!!", verbose, startDirectory);	
 	oss << "Using " << buffer << " as working directory";
-	write_log("WARNING", oss.str(), verbose);	
+	write_log("WARNING", oss.str(), verbose, startDirectory);	
 	target_directory = buffer;
 	}
 
@@ -244,31 +278,31 @@ int main() {
 	string date = get_current_datetime();
 	date = date.substr(0, 8);
     	string directoryName = cam_name+"_"+date;	
-	create_dir(directoryName, verbose);    	
+	create_dir(directoryName, verbose, startDirectory);    	
 	//
 	string current_dir = target_directory+"/"+directoryName;
-	write_log("INFO", "Images will be saved at: " + current_dir, verbose);	
+	write_log("INFO", "Images will be saved at: " + current_dir, verbose, startDirectory);	
 	
 	//Creating folders to store data	
 	
 	//Binary Depth Directory
 	string depthdir = current_dir+"/depth_bin";
-	create_dir(depthdir, verbose);
+	create_dir(depthdir, verbose, startDirectory);
 	
 	//Color frames directory (if allowed)	
 	string colordir = current_dir+"/rgb_png";
 	if (allowRGB=="1")
 	{
-	create_dir(colordir, verbose);
+	create_dir(colordir, verbose, startDirectory);
 	}
 
 	//Colored depth directory
 	string col_depthdir = current_dir+"/depth_png";
-	create_dir(col_depthdir, verbose);
+	create_dir(col_depthdir, verbose, startDirectory);
 
 	//IR frames directory
 	string irdir = current_dir+"/IR_png";
-	create_dir(irdir, verbose);	
+	create_dir(irdir, verbose, startDirectory);	
 
 	//BEGIN MAIN LOOP 
 	while (true)
@@ -282,7 +316,7 @@ int main() {
 	 	 int frame_count = 0;	  	            
 	 	 if (dist < stof(distance))
        		 {
-			write_log("INFO", "Average distance from ROI is " + std::to_string(dist) + " m", verbose);  		
+			write_log("INFO", "Average distance from ROI is " + std::to_string(dist) + " m", verbose, startDirectory);  		
 	    		string time_now = get_current_datetime();
 
 	    		if (frame && frame.get_data())
@@ -291,7 +325,7 @@ int main() {
 	    	    
 	        	string depthFilename = depthdir+"/"+time_now+"_"+to_string(frame_count)+"_d.bin";    
                   	ofstream(depthFilename, ios::binary).write((char*)dframe.get_data(), dframe.get_width() * dframe.get_height()*dframe.get_bytes_per_pixel());
-			write_log("INFO", "Saved " + depthFilename, verbose);	
+			write_log("INFO", "Saved " + depthFilename, verbose, startDirectory);	
 	       
 		  	// Save the color image
 			if (allowRGB=="1")
@@ -299,21 +333,21 @@ int main() {
 	      	  	auto cframe = frame.get_color_frame();	    
 	      	  	string colorFilename = colordir+"/"+time_now+"_"+"c"+".png";            
               	  	stbi_write_png(colorFilename.c_str(), cframe.get_width(), cframe.get_height(),cframe.get_bytes_per_pixel(), cframe.get_data(), cframe.get_stride_in_bytes());            
-              	  	write_log("INFO", "Saved " + colorFilename, verbose);		
+              	  	write_log("INFO", "Saved " + colorFilename, verbose, startDirectory);		
 	      	 	}
 		
 	         	// Save IR image
 	         	auto iframe = frame.get_infrared_frame();	    
 	         	string iFilename = irdir+"/"+time_now+"_"+"i"+".png";            
                  	stbi_write_png(iFilename.c_str(), iframe.get_width(), iframe.get_height(),iframe.get_bytes_per_pixel(), iframe.get_data(), iframe.get_stride_in_bytes());
-	         	write_log("INFO", "Saved " + iFilename, verbose);           
+	         	write_log("INFO", "Saved " + iFilename, verbose, startDirectory);           
               	
 	         	// Save the colored depth image as png
 	         	// Colorize the depth frame
                  	rs2::video_frame d_color = color_map.colorize(dframe);	    
 	         	string col_depthFilename = col_depthdir+"/depth_"+time_now+"_"+"d"+".png";
 	         	stbi_write_png(col_depthFilename.c_str(), d_color.get_width(), d_color.get_height(), d_color.get_bytes_per_pixel(), d_color.get_data(),  d_color.get_stride_in_bytes());             
-                 	write_log("INFO", "Saved " + col_depthFilename, verbose);       	    
+                 	write_log("INFO", "Saved " + col_depthFilename, verbose, startDirectory);       	    
             
               		frame_count++; // Increment the frame count
 	      		}	    
@@ -322,7 +356,8 @@ int main() {
 		std::stringstream error_text;
 		error_text << "RealSense error calling " << e.get_failed_function() << "(" << e.get_failed_args() << "):\n    " << e.what();
 		//cout << error_text.str() << endl;
-		write_log("ERROR", error_text.str(), verbose);
+		write_log("ERROR", error_text.str(), verbose, startDirectory);
+		pipe.stop();
 		return 1;
 	}	
     
