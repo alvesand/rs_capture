@@ -1,6 +1,6 @@
 #DO NOT ALTER THE ORDER OF LINES WITHOUT '#'
 #Set working directory name
-/home/alveslab/Test
+/home/alveslab/Img_MP
 #Set camera name
 TD_UGA1
 #Set image width (pixels)
@@ -29,3 +29,6 @@ TD_UGA1
 2
 #Chose which camera to use (in case of multiple cameras, first camera = 0)
 0
+#Chose the run length (minutes) to run the camera (e.g., 20 for running for 20 minutes, -1 runs for indefinite time)
+2
+
